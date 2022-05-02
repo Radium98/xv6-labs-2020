@@ -178,6 +178,15 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void            vmprint(pagetable_t);
+pagetable_t     proc_kvminit();
+void            proc_kvmmap(pagetable_t, uint64, uint64, uint64, int);
+void            u2uk(pagetable_t, pagetable_t, uint64);
+// pte_t*          walk(pagetable_t, uint64, int);
+
+// vmcopyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
 
 // plic.c
 void            plicinit(void);

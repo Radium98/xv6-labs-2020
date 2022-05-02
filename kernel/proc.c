@@ -120,7 +120,15 @@ found:
     release(&p->lock);
     return 0;
   }
-
+  /////////////////////////////////////////////////
+  p->kernel_pt = proc_kvminit();
+  uint64 va = KSTACK((int) (p - proc));
+  uint64 pa = kvmpa(va);
+  proc_kvmmap(p->kernel_pt, (uint64)va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+  
+   
+  /////////////////////////////////////////////////
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -129,6 +137,29 @@ found:
 
   return p;
 }
+
+
+////////////////////////////////////
+
+void procfreekpt(pagetable_t pagetable){
+  for(int i = 0; i < 512; i ++ )
+  {
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V)
+    {
+      pagetable[i] = 0;
+      if((pte & (PTE_R | PTE_W |PTE_X)) == 0)
+      {
+        uint64 child = PTE2PA(pte);
+        procfreekpt((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void *)pagetable);
+}
+
+
+////////////////////////////////////
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -141,6 +172,10 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  ///////////////////////////////////////
+  procfreekpt(p->kernel_pt);
+  p->kernel_pt = 0;
+  ///////////////////////////////////////
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -220,6 +255,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  u2uk(p->pagetable, p->kernel_pt, p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -274,7 +310,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
+  ////////////////////////////////////////////////////
+  u2uk(np->pagetable, np->kernel_pt, np->sz);
+  ////////////////////////////////////////////////////
   np->parent = p;
 
   // copy saved user registers.
@@ -299,6 +337,7 @@ fork(void)
 
   return pid;
 }
+
 
 // Pass p's abandoned children to init.
 // Caller must hold p->lock.
@@ -473,8 +512,14 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        /////////////////////////////////////////////////
+        w_satp(MAKE_SATP(p->kernel_pt));
+        sfence_vma();
+        /////////////////////////////////////////////////
         swtch(&c->context, &p->context);
-
+        /////////////////////////////////////////////////
+        kvminithart();
+        /////////////////////////////////////////////////
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
