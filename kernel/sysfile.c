@@ -290,6 +290,7 @@ sys_open(void)
   int fd, omode;
   struct file *f;
   struct inode *ip;
+  // int depth = 0;
   int n;
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
@@ -309,6 +310,24 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
+    // // follow the symlink
+    // while (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW) && depth < 20) {
+    //   readi(ip,0,(uint64)path,0,MAXPATH);
+    //   iunlockput(ip);
+    //   if((ip = namei(path)) == 0){
+    //     end_op();
+    //     return -1;
+    //   }
+    //   ilock(ip);
+    //   depth++;
+    // }
+    // // might have a ring, return error
+    // if (depth == 20) {
+    //   iunlockput(ip);
+    //   end_op();
+    //   return -1;
+    // }
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -321,6 +340,38 @@ sys_open(void)
     end_op();
     return -1;
   }
+
+  //////////////////////////////////////////////
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    // 若符号链接指向的仍然是符号链接，则递归的跟随它
+    // 直到找到真正指向的文件
+    // 但深度不能超过20
+    for(int i = 0; i < 20; ++i) {
+      // 读出符号链接指向的路径
+      if(readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      ip = namei(path);
+      if(ip == 0) {
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if(ip->type != T_SYMLINK)
+        break;
+    }
+    // 超过最大允许深度后仍然为符号链接，则返回错误
+    if(ip->type == T_SYMLINK) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+  }
+  //////////////////////////////////////////////
+
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -484,3 +535,33 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+///////////////////////////////////////////////////
+uint64
+sys_symlink(void)
+{
+  char path[MAXPATH], target[MAXPATH];
+  struct inode *ip;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+  begin_op();
+  //  创建一个inode
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0)
+  {
+    end_op();
+    return -1;
+  }
+  //  在符号链接的data中写入被链接的文件
+  if(writei(ip, 0, (uint64)target, 0, MAXPATH) < MAXPATH)
+  {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  iunlockput(ip);
+  end_op();
+  return 0;
+}
+///////////////////////////////////////////////////
